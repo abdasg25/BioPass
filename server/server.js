@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
-const authRoutes = require('./routes/auth');
+const authRoutes = require('./routes/Auth');
 require('dotenv').config();
 const app = express();
 database_url = process.env.MONGODB_URI || 'mongodb://localhost:27017/lms-passkey-auth';
@@ -11,11 +11,7 @@ mongoose.connect(database_url)
   .catch(err => console.error('MongoDB connection error:', err));
 
 // Middleware - Allow all origins for development
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type']
-}));
+app.use(cors());
 
 app.use(express.json());
 

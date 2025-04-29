@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-
+import Navbar from './NavBar';
 const Signup = () => {
   const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
+  const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
@@ -17,9 +19,10 @@ const Signup = () => {
       return;
     }
     try {
-      console.log(email);
       const response = await axios.post('http://localhost:5001/api/auth/signup', {
         email,
+        username,
+        name,
         password
       });
       if (response.data.success) {
@@ -35,6 +38,8 @@ const Signup = () => {
   };
 
   return (
+    <>
+      <Navbar />
     <div className="auth-container">
       <h2>Sign Up with Email</h2>
       <form onSubmit={handleSignup}>
@@ -44,6 +49,24 @@ const Signup = () => {
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+        </div>
+        <div className="form-group">
+          <label>Username:</label>
+          <input
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            required
+          />
+        </div>
+        <div className="form-group">
+          <label>Name:</label>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
             required
           />
         </div>
@@ -69,6 +92,7 @@ const Signup = () => {
         <button type="submit">Sign Up</button>
       </form>
     </div>
+    </>
   );
 };
 

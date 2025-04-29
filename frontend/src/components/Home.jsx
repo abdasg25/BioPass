@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import Navbar from './NavBar';
 
 const Home = () => {
   const [user, setUser] = useState(null);
@@ -16,6 +17,7 @@ const Home = () => {
 
   const handleLogout = () => {
     localStorage.removeItem('user');
+    localStorage.removeItem('token');
     navigate('/login');
   };
 
@@ -24,11 +26,14 @@ const Home = () => {
   }
 
   return (
-    <div className="home-container">
-      <h1>Welcome, {user.displayName}!</h1>
-      <p>You've successfully logged in using passkey authentication.</p>
-      <button onClick={handleLogout}>Logout</button>
-    </div>
+    <>
+        <Navbar />
+        <div className="home-container">
+        <h1>Welcome, {user.displayName}!</h1>
+        <p>You've successfully logged in using passkey authentication.</p>
+        <button onClick={handleLogout}>Logout</button>
+      </div>
+    </>
   );
 };
 

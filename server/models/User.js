@@ -8,8 +8,13 @@ const userSchema = new mongoose.Schema({
     sparse: true // Allows for users without email (e.g., passkey only)
   },
   password: String, // Hashed password
-  username: String, // For passkey users
+  username: {
+    type: String,
+    unique: true,
+    required: false
+  }, // For passkey users
   displayName: String, // For passkey users
+  name: String, // For storing real name
   credentials: [{
     credentialID: String,
     credentialPublicKey: String,
