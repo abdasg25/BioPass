@@ -5,7 +5,7 @@ const Navbar = () => {
   return (
     <nav>
       <div className="logo">
-        <Link to="/">LMS Passkey Auth</Link>
+        <Link to="/">BioPass</Link>
       </div>
       <div className="nav-links">
         <Link to="/login">Login</Link>

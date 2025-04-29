@@ -79,7 +79,7 @@ router.post('/generate-registration-options', async (req, res) => {
   const userID = user ? user._id : uuidv4();
   
   const options = generateRegistrationOptions({
-    rpName: 'LMS Passkey Auth',
+    rpName: 'BioPass',
     rpID: process.env.RP_ID || 'localhost',
     userID,
     userName: username,
