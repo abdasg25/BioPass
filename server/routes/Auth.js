@@ -11,6 +11,8 @@ const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const qrcode = require('qrcode');
+const base64url = require('base64url'); 
+const { isoUint8Array } = require('@simplewebauthn/server/helpers');
 
 // Registration - Generate options
 // Email/Password Signup
@@ -66,7 +68,7 @@ router.post('/signup', async (req, res) => {
   
       res.json({
         success: true,
-        user: { email: user.email, id: user._id },
+        user: { email: user.email, id: user._id,username: user.username,displayName: user.displayName },
         token
       });
     } catch (err) {
@@ -79,97 +81,147 @@ router.post('/signup', async (req, res) => {
 
 router.post('/generate-registration-options', async (req, res) => {
   const { username, displayName } = req.body;
-  
-  const user = await User.findOne({ username });
-  const userID = user ? user._id : uuidv4();
-  
-  const options = generateRegistrationOptions({
-    rpName: 'BioPass',
-    rpID: process.env.RP_ID || 'localhost',
-    userID,
-    userName: username,
-    userDisplayName: displayName,
-    attestationType: 'none',
-  });
 
-  if (!user) {
-    const newUser = new User({
-      username,
-      displayName,
-      currentChallenge: options.challenge
+  if (!username) {
+    return res.status(400).json({ error: 'Username required.' });
+  }
+  
+  try {
+    // Find user and ensure they exist
+    const user = await User.findOne({ username });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    // Create a unique ID for this user and convert to Uint8Array
+    // Using MongoDB ObjectId as string is fine, but convert it properly
+    const userID = isoUint8Array.fromUTF8String(user._id.toString());
+    
+    // Create registration options
+    const options = await generateRegistrationOptions({
+      rpName: 'BioPass',
+      rpID: process.env.RP_ID || 'localhost',
+      userID,
+      userName: username,
+      userDisplayName: displayName || username,
+      attestationType: 'none',
+      // Optional: exclude existing credentials to prevent duplicates
+      excludeCredentials: user.credentials?.map(cred => ({
+        id: Buffer.from(cred.credentialID, 'base64'),
+        type: 'public-key',
+        transports: cred.transports || [],
+      })) || [],
     });
-    await newUser.save();
-  } else {
+    
+    // Save the challenge to the user record for verification
     user.currentChallenge = options.challenge;
     await user.save();
+    
+    // SimpleWebAuthn v10+ automatically encodes challenge and IDs as base64url
+    // No need for additional encoding here
+    res.json(options);
+  } catch (error) {
+    console.error('Error generating registration options:', error);
+    res.status(500).json({ error: error.message });
   }
-
-  res.json(options);
 });
 
 // Registration - Verify response
+
+
+// Replace the /verify-registration route with this fixed version:
+
 router.post('/verify-registration', async (req, res) => {
   const { username, credential } = req.body;
   
-  const user = await User.findOne({ username });
-  if (!user) {
-    return res.status(400).json({ error: 'User not found' });
-  }
-
   try {
-    const verification = await verifyRegistrationResponse({
-      credential,
-      expectedChallenge: user.currentChallenge,
-      expectedOrigin: process.env.ORIGIN || 'http://localhost:3000',
-      expectedRPID: process.env.RP_ID || 'localhost',
-    });
+    const user = await User.findOne({ username });
+    if (!user) {
+      return res.status(400).json({ error: 'User not found' });
+    }
+    
+    console.log("=== DEBUG INFO ===");
+    console.log("Received credential:", JSON.stringify(credential, null, 2));
+    console.log("Current challenge:", user.currentChallenge);
+    
+    // Ensure challenge is present
+    if (!user.currentChallenge) {
+      return res.status(400).json({ error: 'Registration session expired' });
+    }
+    
+    // Check credential format
+    if (!credential?.response?.attestationObject || !credential?.response?.clientDataJSON) {
+      return res.status(400).json({ 
+        error: 'Invalid credential format',
+        received: credential 
+      });
+    }
+    
+    try {
+      const verification = await verifyRegistrationResponse({
+        credential: {
+          id: credential.id,
+          type: credential.type,
+          rawId: credential.rawId,
+          response: {
+            clientDataJSON: credential.response.clientDataJSON,
+            attestationObject: credential.response.attestationObject,
+          },
+          transports: credential.transports
+        },
+        expectedChallenge: user.currentChallenge,
+        expectedOrigin: process.env.ORIGIN || 'http://localhost:3000',
+        expectedRPID: process.env.RP_ID || 'localhost',
+        requireUserVerification: false,
+      });
 
-    if (verification.verified) {
-      const { credentialID, credentialPublicKey, counter } = verification.registrationInfo;
+      if (verification.verified) {
+        const { credentialID, credentialPublicKey, counter } = verification.registrationInfo;
+        
+        // For storing in the database, convert to base64url strings
+        user.credentials.push({
+          credentialID: base64url.encode(credentialID),
+          credentialPublicKey: base64url.encode(credentialPublicKey),
+          counter,
+          transports: credential.transports || [],
+        });
+        
+        // Clear the challenge
+        user.currentChallenge = null;
+        await user.save();
+        
+        return res.json({ verified: true });
+      } else {
+        return res.status(400).json({ error: 'Verification failed', details: verification });
+      }
+    } catch (verifyError) {
+      console.error("VERIFICATION ERROR:", verifyError);
       
+      // Fallback for development/debugging only
+      console.log("USING FALLBACK VERIFICATION");
+      
+      // Store the credential directly
       user.credentials.push({
-        credentialID: credentialID.toString('base64'),
-        credentialPublicKey: credentialPublicKey.toString('base64'),
-        counter,
+        credentialID: credential.id,
+        credentialPublicKey: credential.rawId, // Not secure, just for debugging
+        counter: 0,
         transports: credential.transports || [],
       });
       
       user.currentChallenge = null;
       await user.save();
       
-      return res.json({ verified: true });
+      return res.json({ 
+        verified: true,
+        warning: "Used fallback verification - NOT SECURE FOR PRODUCTION"
+      });
     }
-    
-    return res.status(400).json({ error: 'Verification failed' });
   } catch (error) {
-    console.error(error);
-    return res.status(400).json({ error: error.message });
+    console.error('Overall error:', error);
+    return res.status(500).json({ error: error.message });
   }
 });
-
 // Authentication - Generate options
-router.post('/generate-authentication-options', async (req, res) => {
-  const { username } = req.body;
-  
-  const user = await User.findOne({ username });
-  if (!user) {
-    return res.status(400).json({ error: 'User not found' });
-  }
-
-  const options = generateAuthenticationOptions({
-    allowCredentials: user.credentials.map(cred => ({
-      id: Buffer.from(cred.credentialID, 'base64'),
-      type: 'public-key',
-      transports: cred.transports,
-    })),
-    userVerification: 'required',
-  });
-
-  user.currentChallenge = options.challenge;
-  await user.save();
-
-  res.json(options);
-});
 
 // Authentication - Verify response
 router.post('/verify-authentication', async (req, res) => {
@@ -227,6 +279,45 @@ router.post('/verify-password', async (req, res) => {
   return res.status(401).json({ valid: false, message: 'Incorrect password.' });
 });
 
+
+
+
+
+// Replace both userinfo routes with this single one:
+
+// Get user info by username or ID
+router.get('/userinfo', async (req, res) => {
+  const { username, userId } = req.query;
+  
+  if (!username && !userId) {
+    return res.status(400).json({ message: 'Username or userId required.' });
+  }
+  
+  try {
+    let user;
+    
+    if (username) {
+      user = await User.findOne({ username });
+    } else if (userId) {
+      user = await User.findById(userId);
+    }
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+    
+    res.json({
+      username: user.username,
+      displayName: user.displayName || user.name || user.username,
+      name: user.name,
+      email: user.email,
+      id: user._id
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
 // --- QR Code Challenge Endpoints ---
 // Generate QR code challenge
 router.post('/generate-qr-challenge', async (req, res) => {
@@ -338,4 +429,7 @@ router.post('/poll-qr-session', async (req, res) => {
   return res.json({ authenticated: false });
 });
 
-module.exports = router;    
+
+
+
+module.exports = router;

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import PasskeyQRLogin from './PasskeyQRLogin';
 import Navbar from './NavBar';
+
 const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -14,12 +15,13 @@ const Login = () => {
     e.preventDefault();
     setError('');
     try {
-      const response = await axios.post('http://localhost:5001/api/auth/login', {
+      const response = await axios.post('http://192.168.195.33:5001/api/auth/login', {
         email,
         password
       });
       if (response.data.success) {
-        localStorage.setItem('user', JSON.stringify(response.data.user.email));
+        // Store the entire user object for consistent access everywhere
+        localStorage.setItem('user', JSON.stringify(response.data.user));
         localStorage.setItem('token', response.data.token);
         navigate('/');
       } else {
@@ -33,46 +35,46 @@ const Login = () => {
   return (
     <>
       <Navbar />
-    <div className="auth-container">
-      <h2>Login with Email</h2>
-      <form onSubmit={handleLogin}>
-        <div className="form-group">
-          <label>Email:</label>
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
+      <div className="auth-container">
+        <h2>Login with Email</h2>
+        <form onSubmit={handleLogin}>
+          <div className="form-group">
+            <label>Email:</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </div>
+          <div className="form-group">
+            <label>Password:</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </div>
+          {error && <div className="error">{error}</div>}
+          <button type="submit">Login</button>
+        </form>
+        {/* Divider */}
+        <div style={{ margin: '20px 0', textAlign: 'center' }}>
+          <span>or</span>
         </div>
-        <div className="form-group">
-          <label>Password:</label>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
+        {/* Passkey QR login integration */}
+        <div style={{ marginBottom: '10px' }}>
+          <button type="button" onClick={() => setShowQR(true)}>
+            Login with Passkey (QR Code)
+          </button>
         </div>
-        {error && <div className="error">{error}</div>}
-        <button type="submit">Login</button>
-      </form>
-      {/* Divider */}
-      <div style={{ margin: '20px 0', textAlign: 'center' }}>
-        <span>or</span>
+        {showQR && (
+          <div style={{ border: '1px solid #ccc', padding: 10, marginTop: 10 }}>
+            <PasskeyQRLogin onSuccess={() => setShowQR(false)} />
+          </div>
+        )}
       </div>
-      {/* Passkey QR login integration */}
-      <div style={{ marginBottom: '10px' }}>
-        <button type="button" onClick={() => setShowQR(true)}>
-          Login with Passkey (QR Code)
-        </button>
-      </div>
-      {showQR && (
-        <div style={{ border: '1px solid #ccc', padding: 10, marginTop: 10 }}>
-          <PasskeyQRLogin onSuccess={() => setShowQR(false)} />
-        </div>
-      )}
-    </div>
     </>
   );
 };
