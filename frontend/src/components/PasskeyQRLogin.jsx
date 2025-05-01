@@ -16,7 +16,7 @@ const PasskeyQRLogin = ({ onSuccess }) => {
   useEffect(() => {
     async function fetchQR() {
       try {
-        const { data } = await axios.post('http://192.168.195.33:5001/api/auth/generate-qr-session');
+        const { data } = await axios.post('http://localhost:5001/api/auth/generate-qr-session');
         setQR(data.qr);
         setSessionKey(JSON.parse(data.payload).sessionKey);
         setWaiting(true);
@@ -33,14 +33,14 @@ const PasskeyQRLogin = ({ onSuccess }) => {
     if (waiting && sessionKey) {
       interval = setInterval(async () => {
         try {
-          const res = await axios.post('http://192.168.195.33:5001/api/auth/poll-qr-session', { sessionKey });
+          const res = await axios.post('http://localhost:5001/api/auth/poll-qr-session', { sessionKey });
           if (res.data.authenticated) {
             setAuthenticated(true);
             setWaiting(false);
             
             // Get user data after authentication
             try {
-              const userRes = await axios.get(`http://192.168.195.33:5001/api/auth/userinfo?userId=${res.data.userId}`);
+              const userRes = await axios.get(`http://localhost:5001/api/auth/userinfo?userId=${res.data.userId}`);
               
               // Store user data in localStorage
               localStorage.setItem('user', JSON.stringify(userRes.data));

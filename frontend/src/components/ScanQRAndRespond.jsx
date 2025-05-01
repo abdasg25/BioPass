@@ -49,7 +49,7 @@ const ScanQRAndRespond = () => {
         const user = JSON.parse(userString);
         
         // Get authentication options for this session key
-        const optionsRes = await axios.post('http://192.168.195.33:5001/api/auth/generate-authentication-options', {
+        const optionsRes = await axios.post('http://localhost:5001/api/auth/generate-authentication-options', {
           sessionKey: parsed.sessionKey
         });
         
@@ -83,7 +83,7 @@ const ScanQRAndRespond = () => {
         };
         
         // Send the credential to verify the session
-        const verifyRes = await axios.post('http://192.168.195.33:5001/api/auth/verify-qr-session', {
+        const verifyRes = await axios.post('http://localhost:5001/api/auth/verify-qr-session', {
           sessionKey: parsed.sessionKey,
           credential: credentialData
         });

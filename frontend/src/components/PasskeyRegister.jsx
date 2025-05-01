@@ -55,7 +55,7 @@ const PasskeyRegister = () => {
       const username = userObj.username;
       
       // Step 1: Verify password
-      const verify = await axios.post('http://192.168.195.33:5001/api/auth/verify-password', { 
+      const verify = await axios.post('http://localhost:5001/api/auth/verify-password', { 
         username, 
         password 
       });
@@ -70,7 +70,7 @@ const PasskeyRegister = () => {
       setMessage('Password verified. Preparing registration...');
       
       // Step 2: Generate registration options
-      const res = await axios.post('http://192.168.195.33:5001/api/auth/generate-registration-options', { 
+      const res = await axios.post('http://localhost:5001/api/auth/generate-registration-options', { 
         username, 
         displayName: userObj.displayName || userObj.name || username 
       });
@@ -109,7 +109,7 @@ const PasskeyRegister = () => {
       };
       console.log("ENTERING VERIFY-REG");
       // Step 5: Verify registration
-      const verifyRes = await axios.post('http://192.168.195.33:5001/api/auth/verify-registration', { 
+      const verifyRes = await axios.post('http://localhost:5001/api/auth/verify-registration', { 
         username, 
         credential: credentialData 
       });
