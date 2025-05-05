@@ -373,29 +373,106 @@ const pendingSessions = new Map(); // sessionKey -> { createdAt, credentialId, a
 
 // Generate QR code with session key (no username/email)
 router.post('/generate-qr-session', async (req, res) => {
-  const sessionKey = uuidv4();
-  pendingSessions.set(sessionKey, { createdAt: Date.now() });
-  const payload = JSON.stringify({ sessionKey });
-  qrcode.toDataURL(payload, (err, url) => {
-    if (err) return res.status(500).json({ error: 'QR code generation failed' });
-    res.json({ qr: url, payload });
-  });
+  try {
+    const sessionKey = uuidv4();
+    pendingSessions.set(sessionKey, { 
+      createdAt: Date.now(),
+      // Add 5 minute expiration
+      expiresAt: Date.now() + (5 * 60 * 1000)
+    });
+    
+    // Clean up old sessions
+    const now = Date.now();
+    for (const [key, session] of pendingSessions.entries()) {
+      if (session.expiresAt && session.expiresAt < now) {
+        pendingSessions.delete(key);
+      }
+    }
+
+    const payload = JSON.stringify({ sessionKey });
+    
+    qrcode.toDataURL(payload, (err, url) => {
+      if (err) {
+        console.error('QR code generation error:', err);
+        return res.status(500).json({ error: 'QR code generation failed' });
+      }
+      res.json({ 
+        qr: url, 
+        payload: JSON.parse(payload) // Send as object instead of string
+      });
+    });
+  } catch (error) {
+    console.error('Error in generate-qr-session:', error);
+    res.status(500).json({ error: 'Failed to generate QR session' });
+  }
+});
+
+// Generate authentication options for QR code login
+router.post('/generate-authentication-options', async (req, res) => {
+  const { sessionKey } = req.body;
+  
+  if (!sessionKey) {
+    return res.status(400).json({ error: 'Session key is required' });
+  }
+
+  const session = pendingSessions.get(sessionKey);
+  if (!session) {
+    return res.status(400).json({ error: 'Invalid or expired session' });
+  }
+
+  try {
+    const options = await generateAuthenticationOptions({
+      rpID: process.env.RP_ID || 'localhost',
+      userVerification: 'preferred',
+      // Don't include allowCredentials here to allow any registered credential
+    });
+
+    // Store the challenge in the session
+    session.challenge = options.challenge;
+    pendingSessions.set(sessionKey, session);
+
+    res.json(options);
+  } catch (error) {
+    console.error('Error generating authentication options:', error);
+    res.status(500).json({ error: 'Failed to generate authentication options' });
+  }
 });
 
 // Mobile device: verify session by signing sessionKey with passkey
 router.post('/verify-qr-session', async (req, res) => {
   const { sessionKey, credential } = req.body;
+  
+  // Validate session
   const session = pendingSessions.get(sessionKey);
-  if (!session) return res.status(400).json({ error: 'Session key invalid or expired' });
-  // Find user by credentialId
-  const user = await User.findOne({ 'credentials.credentialID': credential.id });
-  if (!user) return res.status(400).json({ error: 'Credential not registered' });
+  if (!session) {
+    return res.status(400).json({ error: 'Session key invalid or expired' });
+  }
+
   try {
-    const { verifyAuthenticationResponse } = require('@simplewebauthn/server');
+    // Find user by credentialId
+    const user = await User.findOne({ 'credentials.credentialID': credential.id });
+    if (!user) {
+      return res.status(400).json({ error: 'Credential not registered' });
+    }
+
     const dbCred = user.credentials.find(c => c.credentialID === credential.id);
+    if (!dbCred) {
+      return res.status(400).json({ error: 'Credential not found' });
+    }
+
     const verification = await verifyAuthenticationResponse({
-      credential,
-      expectedChallenge: sessionKey,
+      credential: {
+        id: credential.id,
+        rawId: credential.rawId,
+        response: {
+          authenticatorData: credential.response.authenticatorData,
+          clientDataJSON: credential.response.clientDataJSON,
+          signature: credential.response.signature,
+          userHandle: credential.response.userHandle
+        },
+        type: 'public-key'
+      },
+      expectedChallenge: session.challenge || sessionKey,
       expectedOrigin: process.env.ORIGIN || 'http://localhost:3000',
       expectedRPID: process.env.RP_ID || 'localhost',
       authenticator: {
@@ -417,7 +494,45 @@ router.post('/verify-qr-session', async (req, res) => {
     return res.status(400).json({ error: err.message });
   }
 });
+// Add to server/routes/Auth.js
 
+// Alternative device registration for browsers without WebAuthn support
+router.post('/register-alternative-device', async (req, res) => {
+  const { username, deviceName } = req.body;
+  
+  try {
+    const user = await User.findOne({ username });
+    if (!user) {
+      return res.status(400).json({ error: 'User not found' });
+    }
+    
+    // Create a simple token-based credential
+    const deviceId = uuidv4();
+    const deviceSecret = uuidv4();
+    
+    // Store in user's credentials array
+    user.credentials.push({
+      credentialID: deviceId,
+      credentialPublicKey: base64url.encode(Buffer.from(deviceSecret)),
+      counter: 0,
+      deviceName: deviceName || 'Alternative Device',
+      isAlternative: true, // Flag to identify alternative credentials
+      createdAt: new Date()
+    });
+    
+    await user.save();
+    
+    // Return success and the device token for storage
+    return res.json({
+      success: true,
+      message: 'Device registered successfully with alternative method',
+      deviceToken: `${deviceId}:${deviceSecret}` // Store this securely
+    });
+  } catch (error) {
+    console.error('Alternative registration error:', error);
+    return res.status(500).json({ error: error.message });
+  }
+});
 // Browser polls with session key to check if authenticated
 router.post('/poll-qr-session', async (req, res) => {
   const { sessionKey } = req.body;

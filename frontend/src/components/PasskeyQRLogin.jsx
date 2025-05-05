@@ -16,12 +16,25 @@ const PasskeyQRLogin = ({ onSuccess }) => {
   useEffect(() => {
     async function fetchQR() {
       try {
-        const { data } = await axios.post('http://localhost:5001/api/auth/generate-qr-session');
-        setQR(data.qr);
-        setSessionKey(JSON.parse(data.payload).sessionKey);
-        setWaiting(true);
+        const { data } = await axios.post('http://10.7.76.50:5002/api/auth/generate-qr-session');
+        console.log('QR Response:', data); // Log the response for debugging
+        
+        if (data.qr && data.payload) {
+          setQR(data.qr);
+          // The payload is already an object, no need to parse
+          const sessionKey = data.payload.sessionKey || data.payload;
+          if (typeof sessionKey === 'string') {
+            setSessionKey(sessionKey);
+            setWaiting(true);
+          } else {
+            throw new Error('Invalid session key format');
+          }
+        } else {
+          throw new Error('Invalid response format from server');
+        }
       } catch (err) {
-        setError(err.response?.data?.error || err.message);
+        console.error('Error in fetchQR:', err);
+        setError(err.response?.data?.error || 'Failed to connect to the server. Please try again.');
       }
     }
     fetchQR();
@@ -33,14 +46,14 @@ const PasskeyQRLogin = ({ onSuccess }) => {
     if (waiting && sessionKey) {
       interval = setInterval(async () => {
         try {
-          const res = await axios.post('http://localhost:5001/api/auth/poll-qr-session', { sessionKey });
+          const res = await axios.post('http://10.7.76.50:5002/api/auth/poll-qr-session', { sessionKey });
           if (res.data.authenticated) {
             setAuthenticated(true);
             setWaiting(false);
             
             // Get user data after authentication
             try {
-              const userRes = await axios.get(`http://localhost:5001/api/auth/userinfo?userId=${res.data.userId}`);
+              const userRes = await axios.get(`http://10.7.76.50:5002/api/auth/userinfo?userId=${res.data.userId}`);
               
               // Store user data in localStorage
               localStorage.setItem('user', JSON.stringify(userRes.data));

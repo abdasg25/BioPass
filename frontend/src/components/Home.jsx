@@ -30,7 +30,7 @@ const Home = () => {
     <>
         <Navbar />
         <div className="home-container">
-        <h1>Welcome, {user.displayName}!</h1>
+        <h1>Welcome, {user.username}!</h1>
         <p>You've successfully logged in using passkey authentication.</p>
         <button onClick={handleLogout}>Logout</button>
       </div>

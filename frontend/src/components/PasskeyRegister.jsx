@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import Navbar from './NavBar';
-
+import AlternativeRegistrationMethod from './AlternativeRegistrationMethod';
 // Helper: base64url <-> ArrayBuffer
 function bufferToBase64url(buffer) {
   return btoa(String.fromCharCode(...new Uint8Array(buffer)))
@@ -17,12 +17,71 @@ function base64urlToBuffer(baseurl) {
   return Uint8Array.from(atob(base64), c => c.charCodeAt(0));
 }
 
+// Add this function at the top of your component to check compatibility
+const checkWebAuthnSupport = () => {
+  // Check if WebAuthn is supported at all
+  if (!window.PublicKeyCredential) {
+    return {
+      supported: false,
+      error: "Your browser doesn't support WebAuthn/passkeys."
+    };
+  }
+  
+  // Check if platform authenticator is available
+  try {
+    return {
+      supported: true
+    };
+  } catch (e) {
+    return {
+      supported: false,
+      error: "WebAuthn is not fully supported in this browser."
+    };
+  }
+};
 const PasskeyRegister = () => {
+  // Add state for browser compatibility
+  const [browserSupport, setBrowserSupport] = useState({ checking: true });
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [messageType, setMessageType] = useState(''); // 'success' or 'error'
+  const [useAlternativeMethod, setUseAlternativeMethod] = useState(false);
   const navigate = useNavigate();
+
+  // Check browser support on component mount
+  useEffect(() => {
+    if (typeof window.PublicKeyCredential !== 'undefined' &&
+        typeof window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable !== 'undefined') {
+      
+      window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
+        .then((available) => {
+          if (available) {
+            setBrowserSupport({ supported: true, checking: false });
+          } else {
+            setBrowserSupport({ 
+              supported: false, 
+              checking: false,
+              error: "Your device doesn't have platform authenticator capability" 
+            });
+          }
+        })
+        .catch(err => {
+          setBrowserSupport({ 
+            supported: false, 
+            checking: false, 
+            error: `Error checking support: ${err.message}` 
+          });
+        });
+    } else {
+      // WebAuthn API not available at all
+      setBrowserSupport({ 
+        supported: false, 
+        checking: false, 
+        error: "Your browser doesn't support WebAuthn/passkeys" 
+      });
+    }
+  }, []);
 
   useEffect(() => {
     const userString = localStorage.getItem('user');
@@ -45,6 +104,14 @@ const PasskeyRegister = () => {
 
   async function handleRegister(e) {
     e.preventDefault();
+    
+    // Check support first
+    if (!browserSupport.supported) {
+      setMessage(`Cannot register: ${browserSupport.error}`);
+      setMessageType('error');
+      return;
+    }
+    
     setMessage('');
     setMessageType('');
     setVerifying(true);
@@ -55,7 +122,7 @@ const PasskeyRegister = () => {
       const username = userObj.username;
       
       // Step 1: Verify password
-      const verify = await axios.post('http://localhost:5001/api/auth/verify-password', { 
+      const verify = await axios.post('http://10.7.76.50:5002/api/auth/verify-password', { 
         username, 
         password 
       });
@@ -70,7 +137,7 @@ const PasskeyRegister = () => {
       setMessage('Password verified. Preparing registration...');
       
       // Step 2: Generate registration options
-      const res = await axios.post('http://localhost:5001/api/auth/generate-registration-options', { 
+      const res = await axios.post('http://10.7.76.50:5002/api/auth/generate-registration-options', { 
         username, 
         displayName: userObj.displayName || userObj.name || username 
       });
@@ -109,7 +176,7 @@ const PasskeyRegister = () => {
       };
       console.log("ENTERING VERIFY-REG");
       // Step 5: Verify registration
-      const verifyRes = await axios.post('http://localhost:5001/api/auth/verify-registration', { 
+      const verifyRes = await axios.post('http://10.7.76.50:5002/api/auth/verify-registration', { 
         username, 
         credential: credentialData 
       });
@@ -137,29 +204,51 @@ const PasskeyRegister = () => {
         <h2>Register Device (Passkey)</h2>
         <p>Register this device to use for passwordless login</p>
         
-        <form onSubmit={handleRegister} className="auth-form">
-          <div className="form-group">
-            <label htmlFor="password">Confirm your password:</label>
-            <input 
-              id="password"
-              type="password" 
-              value={password} 
-              onChange={e => setPassword(e.target.value)} 
-              placeholder="Enter your password" 
-              required 
-            />
+        {browserSupport.checking ? (
+          <div className="compatibility-check">
+            <p>Checking browser compatibility...</p>
           </div>
-          
-          <button 
-            type="submit" 
-            disabled={verifying}
-            className="btn primary-btn"
-          >
-            {verifying ? 'Registering...' : 'Register Device'}
-          </button>
-        </form>
+        ) : !browserSupport.supported ? (
+          <div className="compatibility-error">
+            <h3>Browser Compatibility Issue</h3>
+            <p>{browserSupport.error}</p>
+            <p>This browser doesn't fully support WebAuthn/passkeys.</p>
+            
+            <button 
+              onClick={() => setUseAlternativeMethod(true)} 
+              className="btn secondary-btn"
+            >
+              Use Alternative Method
+            </button>
+          </div>
+        ) : useAlternativeMethod ? (
+          <AlternativeRegistrationMethod username={JSON.parse(localStorage.getItem('user')).username} />
+        ) : (
+          // Your existing form
+          <form onSubmit={handleRegister} className="auth-form">
+            <div className="form-group">
+              <label htmlFor="password">Confirm your password:</label>
+              <input 
+                id="password"
+                type="password" 
+                value={password} 
+                onChange={e => setPassword(e.target.value)} 
+                placeholder="Enter your password" 
+                required 
+              />
+            </div>
+            
+            <button 
+              type="submit" 
+              disabled={verifying}
+              className="btn primary-btn"
+            >
+              {verifying ? 'Registering...' : 'Register Device'}
+            </button>
+          </form>
+        )}
         
-        {message && (
+        {message && !useAlternativeMethod && (
           <div className={`message ${messageType}`}>
             {message}
           </div>
