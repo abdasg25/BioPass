@@ -1,16 +1,16 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
+const QRSession = require('../models/QRSession');
+const Device = require('../models/Device');
 const {
-  generateRegistrationOptions,
-  verifyRegistrationResponse,
-  generateAuthenticationOptions,
   verifyAuthenticationResponse,
 } = require('@simplewebauthn/server');
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const qrcode = require('qrcode');
+const crypto = require('crypto');
 const base64url = require('base64url'); 
 const { isoUint8Array } = require('@simplewebauthn/server/helpers');
 
@@ -18,35 +18,78 @@ const { isoUint8Array } = require('@simplewebauthn/server/helpers');
 // Email/Password Signup
 // /api/auth/signup
 router.post('/signup', async (req, res) => {
-    const { email, username, name, password } = req.body;
-    if (!email || !username || !name || !password)
-      return res.status(400).json({ success: false, message: 'All fields are required.' });
-  
-    try {
-      const existingEmail = await User.findOne({ email });
-      if (existingEmail)
-        return res.status(400).json({ success: false, message: 'Email already registered.' });
-      const existingUsername = await User.findOne({ username });
-      if (existingUsername)
-        return res.status(400).json({ success: false, message: 'Username already taken.' });
-  
-      const hashedPassword = await bcrypt.hash(password, 10);
-      const user = new User({ email, username, name, displayName: name, password: hashedPassword });
-      await user.save();
-  
-      // Issue JWT on signup (optional: you can force login instead)
-      const token = jwt.sign({ id: user._id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '7d' });
-  
-      res.json({
-        success: true,
-        message: 'Signup successful.',
-        user: { email: user.email, id: user._id, username: user.username, name: user.name },
-        token
+  const { username, email, password } = req.body;
+
+  // Validate required fields
+  if (!username || !email || !password) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Username, email and password are required.' 
+    });
+  }
+
+  try {
+    // Check if email already exists
+    const existingEmail = await User.findOne({ email });
+    if (existingEmail) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email already registered.' 
       });
-    } catch (err) {
-      res.status(500).json({ success: false, message: 'Server error.' });
     }
-  });
+
+    // Check if username already exists
+    const existingUsername = await User.findOne({ username });
+    if (existingUsername) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Username already taken.' 
+      });
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create new user
+    const user = new User({
+      username,
+      email,
+      password: hashedPassword
+    });
+
+    await user.save();
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { 
+        id: user._id, 
+        username: user.username,
+        email: user.email 
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    // Return success response
+    res.json({
+      success: true,
+      message: 'Signup successful.',
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email
+      },
+      token
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error.' 
+    });
+  }
+});
+
   
   // Email/Password Login
   router.post('/login', async (req, res) => {
@@ -68,7 +111,7 @@ router.post('/signup', async (req, res) => {
   
       res.json({
         success: true,
-        user: { email: user.email, id: user._id,username: user.username,displayName: user.displayName },
+        user: { email: user.email, userId: `${user._id}`, username: user.username },
         token
       });
     } catch (err) {
@@ -78,319 +121,48 @@ router.post('/signup', async (req, res) => {
 
 
 
-
-router.post('/generate-registration-options', async (req, res) => {
-  const { username, displayName } = req.body;
-
-  if (!username) {
-    return res.status(400).json({ error: 'Username required.' });
-  }
-  
-  try {
-    // Find user and ensure they exist
-    const user = await User.findOne({ username });
-    if (!user) {
-      return res.status(404).json({ error: 'User not found.' });
-    }
-
-    // Create a unique ID for this user and convert to Uint8Array
-    // Using MongoDB ObjectId as string is fine, but convert it properly
-    const userID = isoUint8Array.fromUTF8String(user._id.toString());
-    
-    // Create registration options
-    const options = await generateRegistrationOptions({
-      rpName: 'BioPass',
-      rpID: process.env.RP_ID || 'localhost',
-      userID,
-      userName: username,
-      userDisplayName: displayName || username,
-      attestationType: 'none',
-      // Optional: exclude existing credentials to prevent duplicates
-      excludeCredentials: user.credentials?.map(cred => ({
-        id: Buffer.from(cred.credentialID, 'base64'),
-        type: 'public-key',
-        transports: cred.transports || [],
-      })) || [],
-    });
-    
-    // Save the challenge to the user record for verification
-    user.currentChallenge = options.challenge;
-    await user.save();
-    
-    // SimpleWebAuthn v10+ automatically encodes challenge and IDs as base64url
-    // No need for additional encoding here
-    res.json(options);
-  } catch (error) {
-    console.error('Error generating registration options:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Registration - Verify response
-
-
-// Replace the /verify-registration route with this fixed version:
-
-router.post('/verify-registration', async (req, res) => {
-  const { username, credential } = req.body;
-  
-  try {
-    const user = await User.findOne({ username });
-    if (!user) {
-      return res.status(400).json({ error: 'User not found' });
-    }
-    
-    console.log("=== DEBUG INFO ===");
-    console.log("Received credential:", JSON.stringify(credential, null, 2));
-    console.log("Current challenge:", user.currentChallenge);
-    
-    // Ensure challenge is present
-    if (!user.currentChallenge) {
-      return res.status(400).json({ error: 'Registration session expired' });
-    }
-    
-    // Check credential format
-    if (!credential?.response?.attestationObject || !credential?.response?.clientDataJSON) {
-      return res.status(400).json({ 
-        error: 'Invalid credential format',
-        received: credential 
-      });
-    }
-    
-    try {
-      const verification = await verifyRegistrationResponse({
-        credential: {
-          id: credential.id,
-          type: credential.type,
-          rawId: credential.rawId,
-          response: {
-            clientDataJSON: credential.response.clientDataJSON,
-            attestationObject: credential.response.attestationObject,
-          },
-          transports: credential.transports
-        },
-        expectedChallenge: user.currentChallenge,
-        expectedOrigin: process.env.ORIGIN || 'http://localhost:3000',
-        expectedRPID: process.env.RP_ID || 'localhost',
-        requireUserVerification: false,
-      });
-
-      if (verification.verified) {
-        const { credentialID, credentialPublicKey, counter } = verification.registrationInfo;
-        
-        // For storing in the database, convert to base64url strings
-        user.credentials.push({
-          credentialID: base64url.encode(credentialID),
-          credentialPublicKey: base64url.encode(credentialPublicKey),
-          counter,
-          transports: credential.transports || [],
-        });
-        
-        // Clear the challenge
-        user.currentChallenge = null;
-        await user.save();
-        
-        return res.json({ verified: true });
-      } else {
-        return res.status(400).json({ error: 'Verification failed', details: verification });
-      }
-    } catch (verifyError) {
-      console.error("VERIFICATION ERROR:", verifyError);
-      
-      // Fallback for development/debugging only
-      console.log("USING FALLBACK VERIFICATION");
-      
-      // Store the credential directly
-      user.credentials.push({
-        credentialID: credential.id,
-        credentialPublicKey: credential.rawId, // Not secure, just for debugging
-        counter: 0,
-        transports: credential.transports || [],
-      });
-      
-      user.currentChallenge = null;
-      await user.save();
-      
-      return res.json({ 
-        verified: true,
-        warning: "Used fallback verification - NOT SECURE FOR PRODUCTION"
-      });
-    }
-  } catch (error) {
-    console.error('Overall error:', error);
-    return res.status(500).json({ error: error.message });
-  }
-});
-// Authentication - Generate options
-
-// Authentication - Verify response
-router.post('/verify-authentication', async (req, res) => {
-  const { username, credential } = req.body;
-  
-  const user = await User.findOne({ username });
-  if (!user) {
-    return res.status(400).json({ error: 'User not found' });
-  }
-
-  const dbCredential = user.credentials.find(
-    cred => cred.credentialID === credential.id
-  );
-  
-  if (!dbCredential) {
-    return res.status(400).json({ error: 'Credential not found' });
-  }
-
-  try {
-    const verification = await verifyAuthenticationResponse({
-      credential,
-      expectedChallenge: user.currentChallenge,
-      expectedOrigin: process.env.ORIGIN || 'http://localhost:3000',
-      expectedRPID: process.env.RP_ID || 'localhost',
-      authenticator: {
-        credentialID: Buffer.from(dbCredential.credentialID, 'base64'),
-        credentialPublicKey: Buffer.from(dbCredential.credentialPublicKey, 'base64'),
-        counter: dbCredential.counter,
-      },
-    });
-
-    if (verification.verified) {
-      dbCredential.counter = verification.authenticationInfo.newCounter;
-      user.currentChallenge = null;
-      await user.save();
-      
-      return res.json({ verified: true, user: { username: user.username, displayName: user.displayName } });
-    }
-    
-    return res.status(400).json({ error: 'Verification failed' });
-  } catch (error) {
-    console.error(error);
-    return res.status(400).json({ error: error.message });
-  }
-});
-
-// Verify password for registration confirmation
-router.post('/verify-password', async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) return res.status(400).json({ valid: false, message: 'Username and password required.' });
-  const user = await User.findOne({ username });
-  if (!user) return res.status(400).json({ valid: false, message: 'User not found.' });
-  const isMatch = await bcrypt.compare(password, user.password);
-  if (isMatch) return res.json({ valid: true });
-  return res.status(401).json({ valid: false, message: 'Incorrect password.' });
-});
-
-
-
-
-
 // Replace both userinfo routes with this single one:
 
 // Get user info by username or ID
 router.get('/userinfo', async (req, res) => {
-  const { username, userId } = req.query;
+  const { userId } = req.query
   
-  if (!username && !userId) {
+  if (!userId) { 
     return res.status(400).json({ message: 'Username or userId required.' });
   }
   
   try {
     let user;
     
-    if (username) {
-      user = await User.findOne({ username });
-    } else if (userId) {
+
       user = await User.findById(userId);
-    }
     
     if (!user) {
       return res.status(404).json({ message: 'User not found.' });
     }
     
     res.json({
-      username: user.username,
-      displayName: user.displayName || user.name || user.username,
-      name: user.name,
+      userId: `${user._id}`,
       email: user.email,
-      id: user._id
+      username: user.username 
     });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
   }
 });
-// --- QR Code Challenge Endpoints ---
-// Generate QR code challenge
-router.post('/generate-qr-challenge', async (req, res) => {
-  const { username } = req.body;
-  const user = await User.findOne({ username });
-  if (!user) return res.status(400).json({ error: 'User not found' });
-  const challenge = uuidv4();
-  user.currentChallenge = challenge;
-  await user.save();
-  // Encode username and challenge for QR
-  const payload = JSON.stringify({ username, challenge });
-  // Generate QR code data URL
-  qrcode.toDataURL(payload, (err, url) => {
-    if (err) return res.status(500).json({ error: 'QR code generation failed' });
-    res.json({ qr: url, payload });
-  });
-});
 
-// Enhanced: Verify QR challenge (with real WebAuthn signature verification)
-router.post('/verify-qr-challenge', async (req, res) => {
-  const { username, challenge, credential } = req.body;
-  const user = await User.findOne({ username });
-  if (!user || user.currentChallenge !== challenge) {
-    return res.status(400).json({ error: 'Invalid challenge or user' });
-  }
-  try {
-    const verification = await verifyAuthenticationResponse({
-      credential,
-      expectedChallenge: challenge,
-      expectedOrigin: process.env.ORIGIN || 'http://localhost:3000',
-      expectedRPID: process.env.RP_ID || 'localhost',
-      authenticator: {
-        credentialID: Buffer.from(user.credentials[0].credentialID, 'base64'),
-        credentialPublicKey: Buffer.from(user.credentials[0].credentialPublicKey, 'base64'),
-        counter: user.credentials[0].counter,
-      },
-    });
-    if (verification.verified) {
-      user.credentials[0].counter = verification.authenticationInfo.newCounter;
-      user.currentChallenge = null;
-      await user.save();
-      return res.json({ verified: true });
-    }
-    return res.status(400).json({ error: 'Verification failed' });
-  } catch (err) {
-    console.error(err);
-    return res.status(400).json({ error: err.message });
-  }
-});
 
-// In-memory session store for demo (replace with DB in production)
-const pendingSessions = new Map(); // sessionKey -> { createdAt, credentialId, authenticatedUserId }
 
-// Generate QR code with session key (no username/email)
+// // Generate QR code with session key (no username/email)
 router.post('/generate-qr-session', async (req, res) => {
   try {
     const sessionKey = uuidv4();
-    pendingSessions.set(sessionKey, { 
-      createdAt: Date.now(),
-      // Add 5 minute expiration
-      expiresAt: Date.now() + (5 * 60 * 1000)
-    });
-    
-    // Clean up old sessions
-    const now = Date.now();
-    for (const [key, session] of pendingSessions.entries()) {
-      if (session.expiresAt && session.expiresAt < now) {
-        pendingSessions.delete(key);
-      }
-    }
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 min
+    await QRSession.create({ sessionKey, createdAt: new Date(), expiresAt });
 
     const payload = JSON.stringify({ sessionKey });
-    
+    console.log(payload);
     qrcode.toDataURL(payload, (err, url) => {
       if (err) {
         console.error('QR code generation error:', err);
@@ -407,44 +179,20 @@ router.post('/generate-qr-session', async (req, res) => {
   }
 });
 
+
+
 // Generate authentication options for QR code login
-router.post('/generate-authentication-options', async (req, res) => {
-  const { sessionKey } = req.body;
-  
-  if (!sessionKey) {
-    return res.status(400).json({ error: 'Session key is required' });
-  }
 
-  const session = pendingSessions.get(sessionKey);
-  if (!session) {
-    return res.status(400).json({ error: 'Invalid or expired session' });
-  }
 
-  try {
-    const options = await generateAuthenticationOptions({
-      rpID: process.env.RP_ID || 'localhost',
-      userVerification: 'preferred',
-      // Don't include allowCredentials here to allow any registered credential
-    });
 
-    // Store the challenge in the session
-    session.challenge = options.challenge;
-    pendingSessions.set(sessionKey, session);
-
-    res.json(options);
-  } catch (error) {
-    console.error('Error generating authentication options:', error);
-    res.status(500).json({ error: 'Failed to generate authentication options' });
-  }
-});
 
 // Mobile device: verify session by signing sessionKey with passkey
 router.post('/verify-qr-session', async (req, res) => {
   const { sessionKey, credential } = req.body;
   
   // Validate session
-  const session = pendingSessions.get(sessionKey);
-  if (!session) {
+  const session = await QRSession.findOne({ sessionKey });
+  if (!session || session.expiresAt < Date.now()) {
     return res.status(400).json({ error: 'Session key invalid or expired' });
   }
 
@@ -484,8 +232,8 @@ router.post('/verify-qr-session', async (req, res) => {
     if (verification.verified) {
       dbCred.counter = verification.authenticationInfo.newCounter;
       session.authenticatedUserId = user._id;
-      // Optionally, set a short expiry for the session
-      pendingSessions.set(sessionKey, session);
+      session.markModified && session.markModified('authenticatedUserId');
+      await session.save();
       return res.json({ verified: true });
     }
     return res.status(400).json({ error: 'Verification failed' });
@@ -494,57 +242,175 @@ router.post('/verify-qr-session', async (req, res) => {
     return res.status(400).json({ error: err.message });
   }
 });
-// Add to server/routes/Auth.js
-
-// Alternative device registration for browsers without WebAuthn support
-router.post('/register-alternative-device', async (req, res) => {
-  const { username, deviceName } = req.body;
-  
-  try {
-    const user = await User.findOne({ username });
-    if (!user) {
-      return res.status(400).json({ error: 'User not found' });
-    }
-    
-    // Create a simple token-based credential
-    const deviceId = uuidv4();
-    const deviceSecret = uuidv4();
-    
-    // Store in user's credentials array
-    user.credentials.push({
-      credentialID: deviceId,
-      credentialPublicKey: base64url.encode(Buffer.from(deviceSecret)),
-      counter: 0,
-      deviceName: deviceName || 'Alternative Device',
-      isAlternative: true, // Flag to identify alternative credentials
-      createdAt: new Date()
-    });
-    
-    await user.save();
-    
-    // Return success and the device token for storage
-    return res.json({
-      success: true,
-      message: 'Device registered successfully with alternative method',
-      deviceToken: `${deviceId}:${deviceSecret}` // Store this securely
-    });
-  } catch (error) {
-    console.error('Alternative registration error:', error);
-    return res.status(500).json({ error: error.message });
-  }
-});
 // Browser polls with session key to check if authenticated
 router.post('/poll-qr-session', async (req, res) => {
   const { sessionKey } = req.body;
-  const session = pendingSessions.get(sessionKey);
-  if (session && session.authenticatedUserId) {
-    // Optionally, issue a JWT or session token here
-    return res.json({ authenticated: true, userId: session.authenticatedUserId });
+  // console.log('[poll-qr-session] Incoming request:', req.body);
+
+  if (!sessionKey) {
+    // console.log('[poll-qr-session] sessionKey missing in request body');
+    return res.status(400).json({ authenticated: false, error: 'sessionKey required' });
   }
-  return res.json({ authenticated: false });
+
+  const session = await QRSession.findOne({ sessionKey });
+  // console.log('[poll-qr-session] QRSession.findOne result:', session);
+  
+  // Session doesn't exist
+  if (!session) {
+    // console.log(`[poll-qr-session] No session found for sessionKey: ${sessionKey}`);
+    return res.json({ 
+      authenticated: false,
+      error: 'Session not found'
+    });
+  }
+
+  // Session expired
+  if (session.expiresAt < Date.now()) {
+    // console.log(`[poll-qr-session] Session expired for sessionKey: ${sessionKey}, expiresAt: ${session.expiresAt}, now: ${Date.now()}`);
+    await QRSession.deleteOne({ sessionKey });
+    return res.json({ 
+      authenticated: false,
+      error: 'Session expired'
+    });
+  }
+
+  // Session is authenticated
+  if (session.authenticated && session.authenticatedUserId) {
+    // console.log(`[poll-qr-session] Session authenticated for sessionKey: ${sessionKey}, userId: ${session.authenticatedUserId}`);
+    return res.json({ 
+      authenticated: true,
+      userId: session.authenticatedUserId,
+      webSessionToken: session.webSessionToken  // Return to frontend
+    });
+  }
+
+  // Session exists but not authenticated yet
+  // console.log(`[poll-qr-session] Session exists but not authenticated yet for sessionKey: ${sessionKey}`);
+  return res.json({ 
+    authenticated: false,
+    status: 'waiting_for_authentication'
+  });
 });
 
 
+
+
+
+// Middleware to verify JWT
+function authMiddleware(req, res, next) {
+  const token = req.headers.authorization && req.headers.authorization.split(' ')[1];
+  if (!token) return res.status(401).json({ success: false, message: 'No token provided.' });
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) return res.status(401).json({ success: false, message: 'Invalid token.' });
+    req.user = decoded;
+    next();
+  });
+}
+
+// POST /register-device
+router.post('/register-device', authMiddleware, async (req, res) => {
+  const { deviceId, email } = req.body;
+  let user;
+    
+
+  user = await User.findOne({ email });
+  const userId = user._id;
+  if (!deviceId && !userId) {
+    return res.status(400).json({ success: false, message: 'Device ID and User ID required.' });
+  }
+  try {
+    const updatedDevice = await Device.findOneAndUpdate(
+      { userId }, // Find by userId only
+      {
+        $set: { deviceId },          // Always update deviceId
+        $setOnInsert: { userId }     // Set userId only if inserting a new doc
+      },
+      {
+        upsert: true,
+        new: true
+      }
+    );
+    
+
+    res.json({ success: true, message: 'Device registered/updated.', data: updatedDevice });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ success: false, message: 'Server error.' });
+  }
+});
+
+// POST /activate-qr-session
+router.post('/activate-qr-session', authMiddleware, async (req, res) => {
+  const { sessionKey, deviceId, email } = req.body;
+  console.log(req.body);
+  console.log("Incoming /activate-qr-session request:");
+  console.log("sessionKey:", sessionKey);
+  console.log("deviceId:", deviceId);
+  console.log("email:", email);
+
+  if (!sessionKey || !deviceId || !email) {
+    console.warn("Missing required fields.");
+    return res.status(400).json({ success: false, message: 'SessionKey, deviceId, and email are required.' });
+  } 
+
+  const session = await QRSession.findOne({sessionKey});
+  console.log("Fetched session:", session);
+
+  if (!session) {
+    console.warn("QR session not found in DB.");
+    return res.status(400).json({ success: false, message: 'QR session invalid.' });
+  }
+
+  if (session.expiresAt < Date.now()) {
+    console.warn("QR session expired. expiresAt:", session.expiresAt, "Current time:", new Date());
+    return res.status(400).json({ success: false, message: 'QR session expired.' });
+  }
+
+  if (session.authenticated) {
+    console.warn("QR session already used.");
+    return res.status(403).json({ success: false, message: 'QR session already authenticated.' });
+  }
+
+  const device = await Device.findOne({ deviceId });
+  console.log("Fetched device:", device);
+
+  if (!device) {
+    console.warn("Device not registered. deviceId:", deviceId);
+    return res.status(403).json({ success: false, message: 'Device not registered.' });
+  }
+
+  const user = await User.findOne({ email });
+  console.log("Fetched user:", user);
+
+  if (!user) {
+    console.warn("User not found. email:", email);
+    return res.status(404).json({ success: false, message: 'User not found.' });
+  }
+
+  // Mark session as authenticated
+  session.authenticated = true;
+  session.authenticatedUserId = user._id;
+  session.deviceId = deviceId;
+
+  try {
+    session.webSessionToken = jwt.sign(
+      { id: req.userId, web: true },
+      process.env.JWT_SECRET,
+      { expiresIn: '15m' }
+    );
+  } catch (err) {
+    console.error("Error generating JWT:", err);
+    return res.status(500).json({ success: false, message: 'Token generation failed.' });
+  }
+
+  await session.save();
+  console.log("Session updated and saved.");
+
+  return res.json({
+    success: true,
+    webSessionToken: session.webSessionToken
+  });
+});
 
 
 module.exports = router;

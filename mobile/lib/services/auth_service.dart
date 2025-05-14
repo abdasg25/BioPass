@@ -5,7 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class AuthService {
   // Change this to match your backend server address
-  static const String baseUrl = 'http://10.7.76.50:5002/api/auth';
+  static const String baseUrl = 'http://localhost:5002/api/auth';
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
   
   // Login with email and password

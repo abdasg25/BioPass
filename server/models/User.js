@@ -13,8 +13,6 @@ const userSchema = new mongoose.Schema({
     unique: true,
     required: false
   }, // For passkey users
-  displayName: String, // For passkey users
-  name: String, // For storing real name
   credentials: [
     {
       credentialID: { type: String, required: true },
