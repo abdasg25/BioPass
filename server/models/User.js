@@ -24,7 +24,15 @@ const userSchema = new mongoose.Schema({
   currentChallenge: {
     type: String,
     default: null
-  }
+  },
+  authenticated: {
+  type: Boolean,
+  default: false
+},
+createdAt: {
+  type: Date,
+  default: Date.now
+}
 }, { timestamps: true });
 
 module.exports = mongoose.model('User', userSchema);

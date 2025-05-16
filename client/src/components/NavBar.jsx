@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 
 const Navbar = () => {
   const [user, setUser] = useState(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
+  const location = useLocation();
 
   // Check for user token on mount and when it changes
   useEffect(() => {
@@ -66,6 +68,9 @@ const Navbar = () => {
                   <button
                     onClick={() => {
                       localStorage.removeItem('token');
+                      localStorage.removeItem("userId");
+                      localStorage.removeItem("user");
+                      
                       setUser(null);
                       window.dispatchEvent(new Event('storage'));
                     }}
@@ -120,7 +125,7 @@ const Navbar = () => {
         <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3 bg-white dark:bg-gray-900 shadow-lg">
           {user ? (
             <>
-              <Link 
+              {/* <Link 
                 to="/dashboard" 
                 className="block px-3 py-2 rounded-md text-base font-medium text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-200"
                 onClick={() => setIsMenuOpen(false)}
@@ -133,7 +138,7 @@ const Navbar = () => {
                 onClick={() => setIsMenuOpen(false)}
               >
                 Profile
-              </Link>
+              </Link> */}
               <button
                 onClick={() => {
                   localStorage.removeItem('token');
@@ -155,13 +160,24 @@ const Navbar = () => {
               >
                 Login
               </Link>
-              <Link 
+              {/* <Link 
                 to="/signup" 
                 className="block px-3 py-2 bg-indigo-600 text-white rounded-md text-base font-medium hover:bg-indigo-700 dark:hover:bg-indigo-500 transition-colors duration-200"
                 onClick={() => setIsMenuOpen(false)}
               >
                 Sign Up
-              </Link>
+              </Link> */}
+              <Link 
+  to="/signup" 
+  className={`px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200 shadow-sm hover:shadow-md ${
+    location.pathname === '/signup' 
+      ? 'bg-gray-300 text-gray-700 cursor-default' 
+      : 'bg-indigo-600 text-white hover:bg-indigo-700 dark:hover:bg-indigo-500'
+  }`}
+>
+  Sign Up
+</Link>
+
             </>
           )}
         </div>
